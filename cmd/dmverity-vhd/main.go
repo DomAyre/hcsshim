@@ -303,6 +303,7 @@ var rootHashVHDCommand = cli.Command{
 
 		// Create a map to store the computed hashes
 		hashes := make(map[int]string)
+		var hashesMutex sync.Mutex
 
 		// Use a wait group to wait for all goroutines to finish
 		var wg sync.WaitGroup
@@ -329,7 +330,9 @@ var rootHashVHDCommand = cli.Command{
 				}
 
 				// Store the computed hash in the map
+				hashesMutex.Lock()
 				hashes[layerNumber] = hash
+				hashesMutex.Unlock()
 			}(layerNumber, layer)
 		}
 
@@ -339,6 +342,9 @@ var rootHashVHDCommand = cli.Command{
 		// Print the computed hashes in ascending order of layerNumber
 		for layerNumber := 0; layerNumber < len(layers); layerNumber++ {
 			hash := hashes[layerNumber]
+			if hash == "" {
+				return fmt.Errorf("failed to compute root hash for layer %d", layerNumber)
+			}
 			fmt.Fprintf(os.Stdout, "Layer %d root hash: %s\n", layerNumber, hash)
 		}
 
