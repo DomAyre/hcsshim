@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -300,22 +301,47 @@ var rootHashVHDCommand = cli.Command{
 			return hash, err
 		}
 
-		for layerNumber, layer := range layers {
-			diffID, err := layer.DiffID()
-			if err != nil {
-				return fmt.Errorf("failed to read layer diff: %w", err)
-			}
-			log.WithFields(log.Fields{
-				"layerNumber": layerNumber,
-				"layerDiff":   diffID.String(),
-			}).Debug("uncompressed layer")
+		// Create a map to store the computed hashes
+		hashes := make(map[int]string)
 
-			hash, err := convertFunc(layer)
-			if err != nil {
-				return fmt.Errorf("failed to compute root digest: %w", err)
-			}
+		// Use a wait group to wait for all goroutines to finish
+		var wg sync.WaitGroup
+		wg.Add(len(layers))
+
+		for layerNumber, layer := range layers {
+			go func(layerNumber int, layer v1.Layer) {
+				defer wg.Done()
+
+				diffID, err := layer.DiffID()
+				if err != nil {
+					log.Errorf("failed to read layer diff: %v", err)
+					return
+				}
+				log.WithFields(log.Fields{
+					"layerNumber": layerNumber,
+					"layerDiff":   diffID.String(),
+				}).Debug("uncompressed layer")
+
+				hash, err := convertFunc(layer)
+				if err != nil {
+					log.Errorf("failed to compute root digest: %v", err)
+					return
+				}
+
+				// Store the computed hash in the map
+				hashes[layerNumber] = hash
+			}(layerNumber, layer)
+		}
+
+		// Wait for all goroutines to finish
+		wg.Wait()
+
+		// Print the computed hashes in ascending order of layerNumber
+		for layerNumber := 0; layerNumber < len(layers); layerNumber++ {
+			hash := hashes[layerNumber]
 			fmt.Fprintf(os.Stdout, "Layer %d root hash: %s\n", layerNumber, hash)
 		}
+
 		return nil
 	},
 }
