@@ -328,6 +328,9 @@ var rootHashVHDCommand = cli.Command{
 					log.Errorf("failed to compute root digest: %v", err)
 					return
 				}
+				log.WithFields(log.Fields{
+					"layerNumber": layerNumber,
+				}).Debug("layer hashed")
 
 				// Store the computed hash in the map
 				hashesMutex.Lock()
