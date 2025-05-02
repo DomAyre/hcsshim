@@ -329,6 +329,89 @@ func mountProcessIsolatedBlockCIMLayers(ctx context.Context, containerID string,
 	return mountedLayers, rcl, nil
 }
 
+func mountHypervIsolatedBlockCIMLayers(ctx context.Context, l *wcowBlockCIMLayers, vm *uvm.UtilityVM, containerID string) (_ *MountedWCOWLayers, _ resources.ResourceCloser, err error) {
+	ctx, span := oc.StartSpan(ctx, "mountHyperVIsolatedBlockCIMLayers")
+	defer func() {
+		oc.SetSpanStatus(span, err)
+		span.End()
+	}()
+
+	rcl := &resources.ResourceCloserList{}
+	defer func() {
+		if err != nil {
+			if rErr := rcl.Release(ctx); rErr != nil {
+				log.G(ctx).WithError(err).Warnf("mount process isolated forked CIM layers, undo failed with: %s", rErr)
+			}
+		}
+	}()
+
+	log.G(ctx).WithFields(logrus.Fields{
+		"scratch":       l.scratchLayerPath,
+		"merged layer":  l.mergedLayer,
+		"parent layers": l.parentLayers,
+	}).Debug("mounting hyperv isolated block CIM layers")
+
+	mountedCIMs, err := vm.MountBlockCIMs(ctx, l.mergedLayer, l.parentLayers, containerID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to mount block CIMs in UVM: %w", err)
+	}
+	rcl.Add(mountedCIMs)
+
+	// mount the CIM inside UVM now
+	log.G(ctx).WithField("volume", mountedCIMs.VolumePath).Debug("mounted blockCIM layers for hyperV isolated container")
+
+	hostPath := filepath.Join(l.scratchLayerPath, "sandbox.vhdx")
+
+	scsiMount, err := vm.SCSIManager.AddVirtualDisk(ctx, hostPath, false, vm.ID(), "", &scsi.MountConfig{
+		FormatWithRefs: true,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to add SCSI scratch VHD: %w", err)
+	}
+	containerScratchPathInUVM := scsiMount.GuestPath()
+	rcl.Add(scsiMount)
+
+	log.G(ctx).WithFields(logrus.Fields{
+		"hostPath": hostPath,
+		"uvmPath":  containerScratchPathInUVM,
+	}).Debug("mounted scratch VHD")
+
+	mountedCIMLayerID, err := cimlayer.LayerID(mountedCIMs.VolumePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get layer ID for mounted block CIM: %w", err)
+	}
+
+	ml := &MountedWCOWLayers{
+		RootFS: containerScratchPathInUVM,
+		MountedLayerPaths: []MountedWCOWLayer{
+			{
+				LayerID:     mountedCIMLayerID,
+				MountedPath: mountedCIMs.VolumePath,
+			},
+		},
+	}
+
+	hcsLayers := []hcsschema.Layer{
+		{
+			Id:   mountedCIMLayerID,
+			Path: filepath.Join(mountedCIMs.VolumePath, "Files"),
+		},
+	}
+
+	err = vm.CombineLayersForCWCOW(ctx, hcsLayers, ml.RootFS, containerID, hcsschema.UnionFS)
+	if err != nil {
+		return nil, nil, err
+	}
+	log.G(ctx).Debug("hcsshim::mountHyperVIsolatedBlockCIMLayers Succeeded")
+
+	return ml, &wcowIsolatedWCIFSLayerCloser{
+		uvm:                     vm,
+		guestCombinedLayersPath: ml.RootFS,
+		scratchMount:            scsiMount,
+		layerClosers:            []resources.ResourceCloser{rcl},
+	}, nil
+}
+
 type wcowIsolatedWCIFSLayerCloser struct {
 	uvm                     *uvm.UtilityVM
 	guestCombinedLayersPath string

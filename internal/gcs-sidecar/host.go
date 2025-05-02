@@ -40,6 +40,21 @@ func (h *Host) SetWCOWConfidentialUVMOptions(securityPolicyRequest *guestresourc
 		return errors.New("security policy has already been set")
 	}
 
+	if securityPolicyRequest.NoSecurityHardware || pspdriver.IsSNPEnabled(ctx) {
+		log.G(ctx).Tracef("Starting psp driver")
+		// Start the psp driver
+		if err := pspdriver.StartPSPDriver(ctx); err != nil {
+			// Failed to start psp driver, return prematurely
+			return errors.Wrapf(err, "failed to start PSP driver")
+		}
+	} else {
+		// failed to load PSP driver, error out
+		// TODO (kiashok): Following log can be cleaned up once the caller stops ignoring failure
+		// due to "rego" error.
+		log.G(ctx).Fatal("failed to load PSP driver: no hardware support or annotation specified")
+		return fmt.Errorf("failed to load PSP driver: no hardware support or annotation specified")
+	}
+
 	// This limit ensures messages are below the character truncation limit that
 	// can be imposed by an orchestrator
 	maxErrorMessageLength := 3 * 1024
