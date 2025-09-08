@@ -12,11 +12,13 @@ for file; do
     fi
     case `file -bz "$file"` in
         "ASCII cpio archive"*"(gzip compressed data"*)
-            gunzip -c "$file" | (cd "$dir" && cpio -iumd) ;;
+            gunzip -c "$file" | (cd "$dir" && cpio -iud) ;;
         "ASCII cpio archive"*)
-            cat "$file" | (cd "$dir" && cpio -iumd) ;;
+            cat "$file" | (cd "$dir" && cpio -iud) ;;
         *)
             tar -xf "$file" -C "$dir" ;;
     esac
 done
-cd "$dir" && find . | cpio --create --format=newc -R 0:0
+# Normalize timestamps using SOURCE_DATE_EPOCH
+find "$dir" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
+cd "$dir" && find . | cpio --create --reproducible --format=newc -R 0:0

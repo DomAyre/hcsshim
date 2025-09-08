@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/binary"
+	"os"
 )
 
 // Constants for the VHD footer
@@ -69,8 +70,10 @@ func calculateCheckSum(footer *vhdFooter) uint32 {
 
 func generateUUID() [16]byte {
 	res := [16]byte{}
-	if _, err := rand.Read(res[:]); err != nil {
-		panic(err)
+	if v := os.Getenv("REPRODUCABLE"); v != "1" {
+		if _, err := rand.Read(res[:]); err != nil {
+			panic(err)
+		}
 	}
 	return res
 }
