@@ -30,6 +30,17 @@ SRCROOT=$(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 # additional directories to search for rule prerequisites and targets
 VPATH=$(SRCROOT)
 
+REPRODUCABLE ?= 0
+ifeq "$(REPRODUCABLE)" "1"
+TAR_FLAGS = \
+	--sort=name --format=posix \
+	--pax-option=exthdr.name=%d/PaxHeaders/%f \
+	--pax-option=delete=atime,delete=ctime \
+	--clamp-mtime --mtime=@$(SOURCE_DATE_EPOCH) \
+	--numeric-owner --owner=0 --group=0 \
+	--mode=go+u,go-w
+endif
+
 # The link aliases for gcstools
 GCS_TOOLS=\
 	generichook \
@@ -44,7 +55,7 @@ out/delta-dev.tar.gz: out/delta.tar.gz bin/internal/tools/snp-report
 	mkdir rootfs-dev
 	tar -xzf out/delta.tar.gz -C rootfs-dev
 	cp bin/internal/tools/snp-report rootfs-dev/bin/
-	tar -zcf $@ -C rootfs-dev .
+	LC_ALL=C tar $(TAR_FLAGS) -zcf $@ -C rootfs-dev .
 	rm -rf rootfs-dev
 
 out/delta-snp.tar.gz: out/delta.tar.gz bin/internal/tools/snp-report boot/startup_v2056.sh boot/startup_simple.sh boot/startup.sh
@@ -58,7 +69,7 @@ out/delta-snp.tar.gz: out/delta.tar.gz bin/internal/tools/snp-report boot/startu
 	chmod a+x rootfs-snp/startup_v2056.sh
 	chmod a+x rootfs-snp/startup_simple.sh
 	chmod a+x rootfs-snp/startup.sh
-	tar -zcf $@ -C rootfs-snp .
+	LC_ALL=C tar $(TAR_FLAGS) -zcf $@ -C rootfs-snp .
 	rm -rf rootfs-snp
 
 out/delta.tar.gz: bin/init bin/vsockexec bin/cmd/gcs bin/cmd/gcstools bin/cmd/hooks/wait-paths Makefile
@@ -81,11 +92,11 @@ out/delta.tar.gz: bin/init bin/vsockexec bin/cmd/gcs bin/cmd/gcstools bin/cmd/ho
 	for tool in $(GCS_TOOLS); do ln -s gcstools rootfs/bin/$$tool; done
 	git -C $(SRCROOT) rev-parse HEAD > rootfs/info/gcs.commit && \
 	git -C $(SRCROOT) rev-parse --abbrev-ref HEAD > rootfs/info/gcs.branch && \
-	date --iso-8601=minute --utc > rootfs/info/tar.date
+	date --iso-8601=minute --utc -d "@$(SOURCE_DATE_EPOCH)" > rootfs/info/tar.date
 	$(if $(and $(realpath $(subst .tar,.testdata.json,$(BASE))), $(shell which jq)), \
 		jq -r '.IMAGE_NAME' $(subst .tar,.testdata.json,$(BASE)) 2>/dev/null > rootfs/info/image.name && \
 		jq -r '.DATETIME' $(subst .tar,.testdata.json,$(BASE)) 2>/dev/null > rootfs/info/build.date)
-	tar -zcf $@ -C rootfs .
+	LC_ALL=C tar $(TAR_FLAGS) -zcf $@ -C rootfs .
 	rm -rf rootfs
 
 bin/cmd/gcs bin/cmd/gcstools bin/cmd/hooks/wait-paths bin/cmd/tar2ext4 bin/internal/tools/snp-report:

@@ -23,6 +23,17 @@ TAR2EXT4_TOOL:=bin/cmd/tar2ext4
 ROOTFS_DEVICE:=/dev/sda
 HASH_DEVICE:=/dev/sdb
 
+REPRODUCABLE ?= 0
+ifeq "$(REPRODUCABLE)" "1"
+TAR_FLAGS = \
+	--sort=name --format=posix \
+	--pax-option=exthdr.name=%d/PaxHeaders/%f \
+	--pax-option=delete=atime,delete=ctime \
+	--clamp-mtime --mtime=$(SNAPSHOT_DATE) \
+	--numeric-owner --owner=0 --group=0 \
+	--mode=go+u,go-w
+endif
+
 .PHONY: all always rootfs test snp simple
 
 .DEFAULT_GOAL := all
@@ -174,7 +185,11 @@ out/kernel.bin: out/rootfs-verity.vhd $(PATH_PREFIX)/$(KERNEL_PATH) out/rootfs.h
 	echo $$(( $$(cat $*.hash.datablocks) * $$(cat $*.hash.datablocksize) / 512 )) > $*.hash.datasectors
 
 out/rootfs.hash.salt:
-	hexdump -vn32 -e'8/4 "%08X" 1 "\n"' /dev/random > $@
+	if [ "$(REPRODUCABLE)" = "1" ]; then \
+		echo "0000000000000000000000000000000000000000000000000000000000000000" > $@; \
+	else \
+		hexdump -vn32 -e'8/4 "%08X" 1 "\n"' /dev/random > $@; \
+	fi
 
 out/rootfs.ext4: out/rootfs.tar.gz $(TAR2EXT4_TOOL)
 	gzip -f -d ./out/rootfs.tar.gz
@@ -187,11 +202,11 @@ out/rootfs-verity.ext4: out/rootfs.ext4 out/rootfs.hash
 out/rootfs.tar.gz: out/initrd.img
 	rm -rf rootfs-conv
 	mkdir rootfs-conv
-	gunzip -c out/initrd.img | (cd rootfs-conv && cpio -imd)
-	tar -zcf $@ -C rootfs-conv .
+	gunzip -c out/initrd.img | (cd rootfs-conv && cpio -id)
+	LC_ALL=C tar $(TAR_FLAGS) -zcf $@ -C rootfs-conv .
 	rm -rf rootfs-conv
 
 out/initrd.img: $(BASE) $(DELTA_TARGET) $(SRCROOT)/hack/catcpio.sh
 	$(SRCROOT)/hack/catcpio.sh "$(BASE)" $(DELTA_TARGET) > out/initrd.img.uncompressed
-	gzip -c out/initrd.img.uncompressed > $@
+	gzip -nc out/initrd.img.uncompressed > $@
 	rm out/initrd.img.uncompressed
